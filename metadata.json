@@ -1,0 +1,6 @@
+{
+  "name": "ORACLIME Technician Digital File Management System",
+  "description": "Offline-first desktop file management system for technician records, indexed by application number with PDF text extraction, OCR review, and secure document storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
