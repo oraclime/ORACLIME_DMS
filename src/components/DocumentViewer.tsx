@@ -16,6 +16,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { AttachedDocument, TechnicianRecord } from '../types/dms';
+import { PdfCanvasViewer } from './PdfCanvasViewer';
 
 interface DocumentViewerProps {
   document: AttachedDocument;
@@ -38,6 +39,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [showOcrBoxes, setShowOcrBoxes] = useState<boolean>(true);
   const [showRawText, setShowRawText] = useState<boolean>(false);
+  const [viewOriginalFile, setViewOriginalFile] = useState<boolean>(Boolean(document.uploadedBlobData));
 
   const isRestrictedDoc = document.isRestricted || document.docType === 'aadhaar';
   const isLocked = isRestrictedDoc && !isAadhaarUnlocked;
@@ -73,9 +75,14 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-xs">
         <div className="flex items-center gap-3 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-cyan-400 font-semibold truncate max-w-[220px]">
-              {document.filename}
+            <span className="font-mono text-cyan-400 font-semibold truncate max-w-[260px]">
+              {document.customTitle || document.filename}
             </span>
+            {document.customTitle && (
+              <span className="text-[11px] text-slate-400 font-mono hidden md:inline truncate max-w-[180px]">
+                ({document.filename})
+              </span>
+            )}
             <span className="text-slate-500">·</span>
             <span className="text-slate-400 uppercase font-mono text-[11px]">
               {document.docType}
@@ -146,6 +153,22 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             <span className="hidden md:inline">Text Layer</span>
           </button>
 
+          {/* Toggle between Uploaded Binary File and Structured Record */}
+          {document.uploadedBlobData && (
+            <button
+              onClick={() => setViewOriginalFile(!viewOriginalFile)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-semibold transition-colors ${
+                viewOriginalFile 
+                  ? 'bg-emerald-950/80 border-emerald-600 text-emerald-300' 
+                  : 'bg-slate-950 border-slate-700 text-slate-300 hover:text-white'
+              }`}
+              title="Toggle between Original Uploaded Document and Form Sheet"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>{viewOriginalFile ? 'Original Upload' : 'Record Sheet'}</span>
+            </button>
+          )}
+
           {/* Download & Print */}
           <button
             onClick={handleDownload}
@@ -191,6 +214,82 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               Audit logged · Unauthorized access prohibited
             </div>
           </div>
+        ) : viewOriginalFile && document.uploadedBlobData ? (
+          <div className="w-full max-w-5xl flex flex-col items-center gap-4">
+            {/* If bank account, show active bank settlement card */}
+            {document.docType === 'bank_account' && technician?.bankDetails && (
+              <div className="w-full p-4 rounded-lg bg-slate-900 border border-slate-700 shadow-md text-xs">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+                  <div className="font-bold text-sm text-cyan-300 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-cyan-400" />
+                    <span>Settlement & Bank Account Details</span>
+                  </div>
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
+                    Active Settlement Account
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Bank Name</span>
+                    <span className="font-bold text-white">{technician.bankDetails.bankName || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Account Holder</span>
+                    <span className="font-bold text-white">{technician.bankDetails.accountHolderName || technician.fullName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Account Number</span>
+                    <span className="font-mono font-bold text-white tracking-wider">{technician.bankDetails.accountNumber || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">IFSC Code</span>
+                    <span className="font-mono font-bold text-cyan-300">{technician.bankDetails.ifscCode || '—'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* If it's an image */}
+            {document.fileMimeType?.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(document.filename) || document.uploadedBlobData.startsWith('data:image/') ? (
+              <div className="w-full bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col items-center shadow-xl">
+                <div className="w-full mb-3 flex items-center justify-between px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs">
+                  <span className="font-mono text-cyan-400 font-semibold">{document.filename}</span>
+                  <span className="text-[11px] text-emerald-400 font-mono bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+                    Original Scan / Image File
+                  </span>
+                </div>
+                <img
+                  src={document.uploadedBlobData}
+                  alt={document.filename}
+                  className="max-w-full max-h-[900px] object-contain rounded border border-slate-700 shadow-lg"
+                  style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center' }}
+                />
+              </div>
+            ) : document.fileMimeType?.startsWith('video/') || /\.(mp4|webm)$/i.test(document.filename) || document.uploadedBlobData.startsWith('data:video/') ? (
+              <div className="w-full bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col items-center shadow-xl">
+                <div className="w-full mb-3 flex items-center justify-between px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs">
+                  <span className="font-mono text-cyan-400 font-semibold">{document.filename}</span>
+                  <span className="text-[11px] text-cyan-400 font-mono bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-800">
+                    Original Video File
+                  </span>
+                </div>
+                <video
+                  src={document.uploadedBlobData}
+                  controls
+                  className="max-w-full max-h-[850px] rounded border border-slate-700 shadow-lg"
+                />
+              </div>
+            ) : (
+              /* Genuine PDF or document rendered via canvas - NEVER blocked by Chrome */
+              <div className="w-full bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-2xl flex flex-col">
+                <PdfCanvasViewer
+                  pdfData={document.uploadedBlobData}
+                  filename={document.filename}
+                  onDownload={handleDownload}
+                />
+              </div>
+            )}
+          </div>
         ) : (
           <div 
             className="relative transition-transform duration-150 ease-out origin-top shadow-2xl"
@@ -213,6 +312,13 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               {/* Render dynamic document template based on document type */}
               {document.docType === 'registration' && (
                 <RegistrationFormDocument 
+                  technician={technician} 
+                  document={document} 
+                />
+              )}
+
+              {document.docType === 'bank_account' && (
+                <BankPassbookDocument 
                   technician={technician} 
                   document={document} 
                 />
@@ -248,7 +354,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               )}
 
               {/* Default fallback for custom or other files */}
-              {['other', 'police_verification'].includes(document.docType) && (
+              {['other', 'police_verification', 'pan_card', 'gst_certificate', 'agreement'].includes(document.docType) && (
                 <div className="space-y-4">
                   <div className="border-b-2 border-slate-900 pb-3 flex justify-between items-center">
                     <div>
@@ -713,3 +819,75 @@ function PhotoBadgeDocument({ technician, document }: { technician?: TechnicianR
     </div>
   );
 }
+
+// Subcomponent: Bank Passbook & Account Details Document
+function BankPassbookDocument({ technician, document }: { technician?: TechnicianRecord; document: AttachedDocument }) {
+  const bank = technician?.bankDetails;
+  return (
+    <div className="space-y-6">
+      <div className="border-b-2 border-slate-900 pb-3 flex justify-between items-center">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight text-slate-900 uppercase">
+            Bank Account & Passbook Settlement Record
+          </h2>
+          <p className="text-xs text-slate-500 font-mono">
+            {document.virtualPath}
+          </p>
+        </div>
+        <div className="text-right">
+          <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded font-mono text-xs font-bold">
+            Settlement Account
+          </span>
+          <div className="text-[10px] text-slate-500 mt-1">
+            Imported: {new Date(document.importDate).toLocaleDateString()}
+          </div>
+        </div>
+      </div>
+
+      <div className="p-5 rounded-lg border border-slate-300 bg-gradient-to-br from-slate-50 to-slate-100 space-y-4">
+        <div className="text-xs font-mono uppercase tracking-wider text-slate-500 font-bold flex items-center justify-between">
+          <span>Active Banking Details</span>
+          <span className="text-cyan-800 font-mono font-bold">{technician?.applicationNumber}</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 text-xs">
+          <div>
+            <div className="text-slate-500 font-mono text-[11px]">Bank Name</div>
+            <div className="font-bold text-slate-900 text-sm">{bank?.bankName || 'State Bank of India'}</div>
+          </div>
+          <div>
+            <div className="text-slate-500 font-mono text-[11px]">Account Holder Name</div>
+            <div className="font-bold text-slate-900 text-sm">{bank?.accountHolderName || technician?.fullName || '—'}</div>
+          </div>
+          <div>
+            <div className="text-slate-500 font-mono text-[11px]">Account Number</div>
+            <div className="font-mono font-bold text-slate-900 text-sm tracking-widest">{bank?.accountNumber || '—'}</div>
+          </div>
+          <div>
+            <div className="text-slate-500 font-mono text-[11px]">IFSC Code</div>
+            <div className="font-mono font-bold text-cyan-800 text-sm">{bank?.ifscCode || '—'}</div>
+          </div>
+          {bank?.branchName && (
+            <div>
+              <div className="text-slate-500 font-mono text-[11px]">Branch Name</div>
+              <div className="font-medium text-slate-800">{bank.branchName}</div>
+            </div>
+          )}
+          {bank?.upiId && (
+            <div>
+              <div className="text-slate-500 font-mono text-[11px]">UPI ID / Net Banking ID</div>
+              <div className="font-mono font-semibold text-slate-800">{bank.upiId}</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {document.extractedText && (
+        <div className="p-4 bg-slate-50 rounded border border-slate-200 font-mono text-xs text-slate-800 whitespace-pre-wrap leading-relaxed">
+          {document.extractedText}
+        </div>
+      )}
+    </div>
+  );
+}
+

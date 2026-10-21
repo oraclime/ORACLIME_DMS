@@ -4,7 +4,11 @@ import {
   BackupSnapshot, 
   AttachedDocument, 
   AuditEntry, 
-  UserAccount 
+  UserAccount,
+  MainCategory,
+  PartnerType,
+  UserRole,
+  UserPermissions
 } from '../types/dms';
 import { 
   INITIAL_TECHNICIANS, 
@@ -23,7 +27,35 @@ export interface AuthResult {
   success: boolean;
   user?: UserAccount;
   error?: string;
+  mustChangePassword?: boolean;
 }
+
+export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, UserPermissions> = {
+  super_admin: {
+    canManageUsers: true,
+    canEditRecords: true,
+    canDeleteRecords: true,
+    canVerifyDocuments: true,
+    canExportBackup: true,
+    canUnmaskAadhaar: true,
+  },
+  administrator: {
+    canManageUsers: true,
+    canEditRecords: true,
+    canDeleteRecords: true,
+    canVerifyDocuments: true,
+    canExportBackup: true,
+    canUnmaskAadhaar: true,
+  },
+  operator: {
+    canManageUsers: false,
+    canEditRecords: true,
+    canDeleteRecords: false,
+    canVerifyDocuments: true,
+    canExportBackup: false,
+    canUnmaskAadhaar: false,
+  },
+};
 
 const STORAGE_KEYS = {
   TECHNICIANS: 'oraclime_dms_technicians_v2',
@@ -115,9 +147,24 @@ export class StorageService {
               hasMigration = true;
             }
 
+            // Normalize role
+            let role: UserRole = u.role;
+            if (role as any === 'admin') role = 'administrator';
+            if (cleanUsername === 'admin' && role !== 'super_admin') {
+              role = 'super_admin';
+              hasMigration = true;
+            }
+
+            // Ensure permissions
+            const permissions: UserPermissions = u.permissions || {
+              ...DEFAULT_ROLE_PERMISSIONS[role] || DEFAULT_ROLE_PERMISSIONS.operator,
+            };
+
             return {
               ...u,
               username: cleanUsername,
+              role,
+              permissions,
               passwordHash: newHash,
               salt: newSalt,
             };
@@ -155,7 +202,17 @@ export class StorageService {
 
   public static hasAdminUser(): boolean {
     const users = this.getUsers();
-    return users.some(u => u.role === 'administrator' && u.status === 'active');
+    return users.some(u => (u.role === 'super_admin' || u.role === 'administrator') && u.status === 'active');
+  }
+
+  public static canPerform(user: UserAccount | null | undefined, permission: keyof UserPermissions): boolean {
+    if (!user || user.status === 'deactivated') return false;
+    if (user.role === 'super_admin') return true;
+    if (user.permissions && user.permissions[permission] !== undefined) {
+      return Boolean(user.permissions[permission]);
+    }
+    const def = DEFAULT_ROLE_PERMISSIONS[user.role];
+    return def ? Boolean(def[permission]) : false;
   }
 
   public static async setupFirstRunAdministrator(data: {
@@ -309,7 +366,14 @@ export class StorageService {
   }
 
   public static async createUser(
-    userData: { username: string; fullName: string; role: 'administrator' | 'operator'; password: string },
+    userData: { 
+      username: string; 
+      fullName: string; 
+      role: UserRole; 
+      password: string;
+      permissions?: UserPermissions;
+      mustChangePassword?: boolean;
+    },
     actor: UserAccount
   ): Promise<{ success: boolean; message: string; user?: UserAccount }> {
     const users = this.getUsers();
@@ -328,12 +392,17 @@ export class StorageService {
     const salt = CryptoService.generateSalt();
     const passwordHash = await CryptoService.hashWithSalt(userData.password, salt);
 
+    const role = userData.role || 'operator';
+    const permissions = userData.permissions || DEFAULT_ROLE_PERMISSIONS[role] || DEFAULT_ROLE_PERMISSIONS.operator;
+
     const newUser: UserAccount = {
       id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       username: cleanUsername,
       fullName: userData.fullName.trim(),
-      role: userData.role,
+      role,
       status: 'active',
+      permissions,
+      mustChangePassword: Boolean(userData.mustChangePassword),
       passwordHash,
       salt,
       createdAt: new Date().toISOString(),
@@ -350,19 +419,27 @@ export class StorageService {
     return { success: true, message: `User '${newUser.username}' created successfully.`, user: newUser };
   }
 
-  public static updateUser(updated: UserAccount): void {
+  public static updateUser(updated: UserAccount, actor?: UserAccount): void {
     const users = this.getUsers();
     const idx = users.findIndex(u => u.id === updated.id);
     if (idx >= 0) {
       users[idx] = updated;
       this.saveUsers(users);
+      if (actor) {
+        this.logAudit(
+          `${actor.fullName} (${actor.username})`,
+          'User Updated',
+          `Modified profile / permissions for user '${updated.username}'.`
+        );
+      }
     }
   }
 
   public static async resetUserPassword(
     userId: string,
     newPassword: string,
-    actor: UserAccount
+    actor: UserAccount,
+    mustChangePassword?: boolean
   ): Promise<{ success: boolean; message: string }> {
     if (newPassword.length < 6) {
       return { success: false, message: 'New password must be at least 6 characters long.' };
@@ -377,15 +454,50 @@ export class StorageService {
 
     target.salt = newSalt;
     target.passwordHash = newHash;
+    target.mustChangePassword = Boolean(mustChangePassword);
 
     this.saveUsers(users);
     this.logAudit(
       `${actor.fullName} (${actor.username})`,
       'Password Reset',
-      `Administrative password reset performed for user '${target.username}'.`
+      `Administrative password reset performed for user '${target.username}' (mustChangePassword: ${Boolean(mustChangePassword)}).`
     );
 
     return { success: true, message: `Password for '${target.username}' has been updated.` };
+  }
+
+  public static async changeUserPassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string }> {
+    if (newPassword.length < 6) {
+      return { success: false, message: 'New password must be at least 6 characters long.' };
+    }
+    const users = this.getUsers();
+    const target = users.find(u => u.id === userId);
+    if (!target) return { success: false, message: 'User not found.' };
+
+    const isValid = await CryptoService.verifyHash(currentPassword, target.salt, target.passwordHash);
+    if (!isValid) {
+      return { success: false, message: 'Current password is incorrect.' };
+    }
+
+    const newSalt = CryptoService.generateSalt();
+    const newHash = await CryptoService.hashWithSalt(newPassword, newSalt);
+
+    target.salt = newSalt;
+    target.passwordHash = newHash;
+    target.mustChangePassword = false;
+
+    this.saveUsers(users);
+    this.logAudit(
+      `${target.fullName} (${target.username})`,
+      'Password Changed',
+      'User successfully changed their password.'
+    );
+
+    return { success: true, message: 'Password updated successfully.' };
   }
 
   public static toggleUserStatus(userId: string, actor: UserAccount): { success: boolean; message: string } {
@@ -484,10 +596,80 @@ export class StorageService {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           const cleaned = this.cleanOldDemoRecords(parsed);
-          if (cleaned.length !== parsed.length) {
-            this.saveTechnicians(cleaned);
+          let hasMigration = cleaned.length !== parsed.length;
+
+          const normalized: TechnicianRecord[] = cleaned.map(t => {
+            let mainCategory: MainCategory = t.mainCategory;
+            let partnerType: PartnerType | undefined = t.partnerType;
+            let specialization: string | undefined = t.specialization;
+
+            // Detect if this record was stored as a partner type
+            const isPartnerEntity = 
+              t.entityType === 'service_center' || 
+              t.entityType === 'godown' || 
+              t.entityType === 'wholesaler';
+
+            const catLower = (t.category || '').toLowerCase();
+            const isPartnerCat = 
+              catLower.includes('service center') || 
+              catLower.includes('godown') || 
+              catLower.includes('warehouse') || 
+              catLower.includes('wholesaler') ||
+              catLower === 'partner';
+
+            if (!mainCategory) {
+              hasMigration = true;
+              if (isPartnerEntity || isPartnerCat) {
+                mainCategory = 'Partner';
+              } else {
+                mainCategory = 'Technician';
+              }
+            }
+
+            if (mainCategory === 'Partner') {
+              if (!partnerType) {
+                hasMigration = true;
+                if (t.entityType === 'service_center' || catLower.includes('service center')) {
+                  partnerType = 'Service Center';
+                } else if (t.entityType === 'godown' || catLower.includes('godown') || catLower.includes('warehouse')) {
+                  partnerType = 'Godown / Warehouse';
+                } else if (t.entityType === 'wholesaler' || catLower.includes('wholesaler')) {
+                  partnerType = 'Wholesaler / Dealer';
+                } else {
+                  partnerType = 'Other AC/HVAC Business';
+                }
+              }
+            } else {
+              // Technician
+              if (!specialization && t.category && t.category !== 'Technician' && t.category !== 'Normal AC Technician') {
+                specialization = t.category;
+              } else if (!specialization) {
+                specialization = 'AC Installation & Repair';
+              }
+            }
+
+            const normalizedCategory = mainCategory; // 'Technician' or 'Partner'
+            if (t.category !== normalizedCategory) {
+              hasMigration = true;
+            }
+
+            return {
+              ...t,
+              mainCategory,
+              category: normalizedCategory,
+              partnerType: mainCategory === 'Partner' ? partnerType : undefined,
+              specialization: mainCategory === 'Technician' ? specialization : undefined,
+              gstNumber: mainCategory === 'Partner' ? t.gstNumber : undefined,
+              entityType: mainCategory === 'Partner' 
+                ? (t.entityType || (partnerType === 'Service Center' ? 'service_center' : partnerType === 'Godown / Warehouse' ? 'godown' : 'wholesaler')) 
+                : 'technician',
+            };
+          });
+
+          if (hasMigration) {
+            this.saveTechnicians(normalized);
           }
-          return cleaned;
+          return normalized;
         }
       }
     } catch {
@@ -529,8 +711,14 @@ export class StorageService {
       details: `Saved changes for ${updatedTech.applicationNumber} (${updatedTech.fullName})`,
     };
 
+    const mainCategory: MainCategory = updatedTech.mainCategory || (updatedTech.partnerType ? 'Partner' : 'Technician');
+    const category = mainCategory;
+
     const techWithAudit: TechnicianRecord = {
       ...updatedTech,
+      mainCategory,
+      category,
+      partnerType: mainCategory === 'Partner' ? (updatedTech.partnerType || 'Service Center') : undefined,
       applicationNumber: updatedTech.applicationNumber.trim().toUpperCase(),
       auditTrail: [auditEntry, ...(updatedTech.auditTrail || [])],
     };
@@ -582,15 +770,262 @@ export class StorageService {
     return updatedTech;
   }
 
-  public static deleteTechnician(id: string, actorName: string): boolean {
+  public static attachDocumentToRecord(
+    appNumber: string,
+    newDoc: AttachedDocument,
+    actorName: string
+  ): { success: boolean; updatedRecord?: TechnicianRecord; message: string } {
     const techs = this.getTechnicians();
-    const target = techs.find(t => t.id === id);
-    if (!target) return false;
+    const index = techs.findIndex(t => t.applicationNumber.toUpperCase() === appNumber.trim().toUpperCase());
+    if (index === -1) {
+      return { success: false, message: `Record with Dossier ID ${appNumber} not found.` };
+    }
 
-    const filtered = techs.filter(t => t.id !== id);
-    this.saveTechnicians(filtered);
-    this.logAudit(actorName, 'Technician Record Deleted', `Removed record ${target.applicationNumber} (${target.fullName}).`);
-    return true;
+    const existingTech = techs[index];
+
+    // Check duplicate attachments:
+    const isDuplicate = existingTech.documents.some(doc => {
+      if (doc.id === newDoc.id) return true;
+      if (doc.filename.toLowerCase() === newDoc.filename.toLowerCase()) return true;
+      if (doc.docType === 'registration' && newDoc.docType === 'registration' && doc.filename === newDoc.filename) return true;
+      return false;
+    });
+
+    if (isDuplicate) {
+      return {
+        success: false,
+        message: `This registration form / document is already attached to ${existingTech.applicationNumber}.`,
+      };
+    }
+
+    const docWithMeta: AttachedDocument = {
+      ...newDoc,
+      linkedApplicationNumber: existingTech.applicationNumber,
+      technicianName: existingTech.fullName,
+      virtualPath: `Records/${existingTech.applicationNumber}/${newDoc.filename}`,
+    };
+
+    const updatedDocs = [...existingTech.documents, docWithMeta];
+
+    const auditEntry: AuditEntry = {
+      id: `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      actor: actorName,
+      action: 'Document Attached to Dossier',
+      details: `Attached official document '${docWithMeta.customTitle || docWithMeta.filename}' (${docWithMeta.docType}) to dossier folder`,
+    };
+
+    const updatedTech: TechnicianRecord = {
+      ...existingTech,
+      documents: updatedDocs,
+      auditTrail: [auditEntry, ...existingTech.auditTrail],
+    };
+
+    techs[index] = updatedTech;
+    this.saveTechnicians(techs);
+    return {
+      success: true,
+      updatedRecord: updatedTech,
+      message: `Document '${docWithMeta.customTitle || docWithMeta.filename}' attached to ${updatedTech.applicationNumber} successfully.`,
+    };
+  }
+
+  public static deleteDocumentFromRecord(
+    appNumber: string,
+    docId: string,
+    actorName: string
+  ): { success: boolean; updatedRecord?: TechnicianRecord; message: string } {
+    const techs = this.getTechnicians();
+    const index = techs.findIndex(t => t.applicationNumber.toUpperCase() === appNumber.trim().toUpperCase());
+    if (index === -1) {
+      return { success: false, message: `Record ${appNumber} not found.` };
+    }
+
+    const tech = techs[index];
+    const docToDelete = tech.documents.find(d => d.id === docId);
+    if (!docToDelete) {
+      return { success: false, message: `Document ID '${docId}' not found in record ${appNumber}.` };
+    }
+
+    const remainingDocs = tech.documents.filter(d => d.id !== docId);
+    const auditEntry: AuditEntry = {
+      id: `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      actor: actorName,
+      action: 'Document Deleted',
+      details: `Deleted file '${docToDelete.filename}' [${docToDelete.docType}${docToDelete.customTitle ? ` - ${docToDelete.customTitle}` : ''}] from record ${tech.applicationNumber}`,
+    };
+
+    const updatedTech: TechnicianRecord = {
+      ...tech,
+      documents: remainingDocs,
+      auditTrail: [auditEntry, ...tech.auditTrail],
+    };
+
+    techs[index] = updatedTech;
+    this.saveTechnicians(techs);
+    this.logAudit(actorName, 'Document Deleted', `Deleted file '${docToDelete.filename}' from record ${tech.applicationNumber}`);
+
+    return { 
+      success: true, 
+      updatedRecord: updatedTech, 
+      message: `Document '${docToDelete.filename}' removed from record ${tech.applicationNumber}.` 
+    };
+  }
+
+  public static replaceDocumentInRecord(
+    appNumber: string,
+    oldDocId: string,
+    replacementDoc: AttachedDocument,
+    actorName: string
+  ): { success: boolean; updatedRecord?: TechnicianRecord; message: string } {
+    const techs = this.getTechnicians();
+    const index = techs.findIndex(t => t.applicationNumber.toUpperCase() === appNumber.trim().toUpperCase());
+    if (index === -1) {
+      return { success: false, message: `Record ${appNumber} not found.` };
+    }
+
+    const tech = techs[index];
+    const docIndex = tech.documents.findIndex(d => d.id === oldDocId);
+    if (docIndex === -1) {
+      return { success: false, message: `Target document ID '${oldDocId}' not found in record ${appNumber}.` };
+    }
+
+    const oldDoc = tech.documents[docIndex];
+    const updatedDoc: AttachedDocument = {
+      ...replacementDoc,
+      id: oldDoc.id, // maintain consistent document id
+      linkedApplicationNumber: tech.applicationNumber,
+      technicianName: tech.fullName,
+      virtualPath: `TechnicianFiles/${tech.applicationNumber}/${replacementDoc.filename}`,
+    };
+
+    const updatedDocs = [...tech.documents];
+    updatedDocs[docIndex] = updatedDoc;
+
+    const auditEntry: AuditEntry = {
+      id: `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      actor: actorName,
+      action: 'Document Replaced',
+      details: `Replaced file '${oldDoc.filename}' with corrected/updated version '${replacementDoc.filename}' in record ${tech.applicationNumber}`,
+    };
+
+    const updatedTech: TechnicianRecord = {
+      ...tech,
+      documents: updatedDocs,
+      auditTrail: [auditEntry, ...tech.auditTrail],
+    };
+
+    techs[index] = updatedTech;
+    this.saveTechnicians(techs);
+    this.logAudit(actorName, 'Document Replaced', `Replaced '${oldDoc.filename}' with '${replacementDoc.filename}' in record ${tech.applicationNumber}`);
+
+    return { 
+      success: true, 
+      updatedRecord: updatedTech, 
+      message: `Document successfully replaced with '${replacementDoc.filename}'.` 
+    };
+  }
+
+  public static updateProfilePhoto(
+    appNumber: string,
+    photoDataUrl: string | undefined,
+    isBusiness: boolean,
+    actorName: string
+  ): { success: boolean; updatedRecord?: TechnicianRecord; message: string } {
+    const techs = this.getTechnicians();
+    const index = techs.findIndex(t => t.applicationNumber.toUpperCase() === appNumber.trim().toUpperCase());
+    if (index === -1) {
+      return { success: false, message: `Record ${appNumber} not found.` };
+    }
+
+    const tech = techs[index];
+    const fieldName = isBusiness ? 'businessPhotoUrl' : 'photoUrl';
+    const actionLabel = photoDataUrl 
+      ? (isBusiness ? 'Business Photo/Logo Uploaded' : 'Profile Photograph Uploaded')
+      : (isBusiness ? 'Business Photo/Logo Removed' : 'Profile Photograph Removed');
+
+    const auditEntry: AuditEntry = {
+      id: `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      actor: actorName,
+      action: actionLabel,
+      details: `${actionLabel} for ${tech.mainCategory || 'record'} ${tech.applicationNumber} (${tech.fullName})`,
+    };
+
+    const updatedTech: TechnicianRecord = {
+      ...tech,
+      [fieldName]: photoDataUrl || undefined,
+      auditTrail: [auditEntry, ...tech.auditTrail],
+    };
+
+    techs[index] = updatedTech;
+    this.saveTechnicians(techs);
+    this.logAudit(actorName, actionLabel, `Updated visual media for ${tech.applicationNumber}`);
+
+    return {
+      success: true,
+      updatedRecord: updatedTech,
+      message: photoDataUrl ? 'Photograph updated successfully.' : 'Photograph removed.',
+    };
+  }
+
+  public static deleteTechnician(
+    idOrAppNumber: string, 
+    actorName: string, 
+    permanent: boolean = false, 
+    reason?: string
+  ): { success: boolean; message: string; recordName?: string } {
+    const techs = this.getTechnicians();
+    const index = techs.findIndex(
+      t => t.id === idOrAppNumber || t.applicationNumber.toUpperCase() === idOrAppNumber.trim().toUpperCase()
+    );
+    if (index === -1) return { success: false, message: 'Record not found.' };
+
+    const target = techs[index];
+    const docCount = target.documents?.length || 0;
+
+    if (permanent) {
+      // Permanent removal
+      const filtered = techs.filter((_, i) => i !== index);
+      this.saveTechnicians(filtered);
+      this.logAudit(
+        actorName, 
+        `${target.mainCategory || 'Technician'} Permanently Deleted`, 
+        `Permanently deleted record ${target.applicationNumber} (${target.fullName}) with ${docCount} associated documents.`
+      );
+      return { 
+        success: true, 
+        message: `Permanently removed record ${target.applicationNumber} (${target.fullName}).`, 
+        recordName: target.fullName 
+      };
+    } else {
+      // Archive / Soft delete (preserves audit history and records compliance)
+      const auditEntry: AuditEntry = {
+        id: `aud_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: new Date().toISOString(),
+        actor: actorName,
+        action: 'Record Archived / Deactivated',
+        details: `Record placed in inactive archive. Reason: ${reason || 'Administrative archiving'}.`,
+      };
+      target.isArchived = true;
+      target.archivedAt = new Date().toISOString();
+      target.archivedReason = reason || 'Administrative archival';
+      target.auditTrail = [auditEntry, ...(target.auditTrail || [])];
+      techs[index] = target;
+      this.saveTechnicians(techs);
+      this.logAudit(
+        actorName,
+        `${target.mainCategory || 'Technician'} Archived`,
+        `Archived record ${target.applicationNumber} (${target.fullName}).`
+      );
+      return { 
+        success: true, 
+        message: `Record ${target.applicationNumber} (${target.fullName}) has been archived.`,
+        recordName: target.fullName
+      };
+    }
   }
 
   // --- EXISTING FILES REPOSITORY ---

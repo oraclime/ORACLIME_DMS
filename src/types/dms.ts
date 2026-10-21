@@ -1,13 +1,29 @@
 /**
- * ORACLIME Technician Digital File Management System
+ * ORACLIME Technician & Partner Digital File Management System
  * Core Data Models & Types - Production Edition
  */
 
 export type VerificationStatus = 'verified' | 'pending_review' | 'flagged_handwritten' | 'rejected';
 
+// Primary categories strictly conform to requirements: Technician or Partners
+export type MainCategory = 'Technician' | 'Partner';
+
+// Secondary types for business partners
+export type PartnerType = 
+  | 'Service Center' 
+  | 'Godown / Warehouse' 
+  | 'Wholesaler / Dealer' 
+  | 'Other AC/HVAC Business';
+
+export type RecordEntityType = 'technician' | 'service_center' | 'godown' | 'wholesaler';
+
 export type DocumentType = 
-  | 'registration' 
+  | 'bank_account'
   | 'aadhaar' 
+  | 'pan_card'
+  | 'gst_certificate'
+  | 'agreement'
+  | 'registration' 
   | 'certificates' 
   | 'photo' 
   | 'experience' 
@@ -15,12 +31,24 @@ export type DocumentType =
   | 'other';
 
 export type TechnicianCategory = 
-  | 'HVAC & RAC Technician'
-  | 'Commercial Chiller Specialist'
-  | 'Inverter AC & VRF Expert'
-  | 'Cold Chain & Refrigeration'
-  | 'Electrical & Controls'
-  | 'General Appliances & RAC';
+  | 'Technician'
+  | 'Partner'
+  | 'Normal AC Technician'
+  | 'AC Installation & Repair'
+  | 'Senior AC Technician'
+  | 'Authorized Service Center'
+  | 'Godown & Warehouse'
+  | 'AC Parts & Equipment Wholesaler'
+  | string;
+
+export interface BankAccountDetails {
+  bankName: string;
+  accountNumber: string;
+  ifscCode: string;
+  accountHolderName: string;
+  branchName?: string;
+  upiId?: string;
+}
 
 export interface BoundingBox {
   id: string;
@@ -40,8 +68,9 @@ export interface BoundingBox {
 export interface AttachedDocument {
   id: string;
   filename: string;
+  customTitle?: string; // User-defined display name e.g. "Technician Trade Certificate"
   docType: DocumentType;
-  virtualPath: string; // e.g. "TechnicianFiles/UPMBD260001/registration.pdf"
+  virtualPath: string; // e.g. "TechnicianFiles/UPMBD260001/bank_passbook.pdf"
   fileSizeKb: number;
   pageCount: number;
   checksum: string; // SHA-256
@@ -68,43 +97,71 @@ export interface AuditEntry {
 
 export interface TechnicianRecord {
   id: string;
-  // A. Registration
+  // A. Entity & Registration
+  mainCategory: MainCategory; // Primary: 'Technician' or 'Partner'
+  partnerType?: PartnerType;   // Secondary: If Partner ('Service Center', 'Godown / Warehouse', etc.)
+  specialization?: string;     // Secondary: If Technician ('Installation & Repair', 'Commercial Chillers', etc.)
+  entityType?: RecordEntityType; // Legacy compatibility
   applicationNumber: string; // Unique primary search key
   registrationDate: string;
   status: VerificationStatus;
   district: string;
-  category: TechnicianCategory;
+  category: string; // 'Technician' or 'Partner' (normalized)
 
-  // B. Personal Details
-  fullName: string;
-  fatherName: string;
+  // B. Personal / Firm Details
+  fullName: string; // Technician Name OR Business/Shop/Godown Name
+  contactPerson?: string; // For Service Center, Godown, Wholesaler
+  fatherName?: string;
   mobile: string;
+  alternateMobile?: string;
   email?: string;
   address: string;
-  dob: string;
-  aadhaarNumber: string; // Masked e.g. "XXXX-XXXX-1234"
+  dob?: string;
+  aadhaarNumber?: string; // Masked e.g. "XXXX-XXXX-1234"
   unmaskedAadhaar?: string; // Secure identifier
+  panNumber?: string;
+  gstNumber?: string;
 
-  // C. Professional Details
-  skills: string[];
-  experienceYears: number;
-  certifications: string[];
-  trainingDetails: string;
+  // C. Bank Account Details (Net Banking / Passbook / Cancelled Cheque)
+  bankDetails?: BankAccountDetails;
 
-  // D. Documents
+  // D. Professional / Facility Details
+  skills?: string[];
+  experienceYears?: number;
+  certifications?: string[];
+  trainingDetails?: string;
+  capacityOrCoverage?: string;
+
+  // E. Documents
   documents: AttachedDocument[];
-  folderPath: string; // e.g. "ORACLIME_DMS/TechnicianFiles/UPMBD260001/"
+  folderPath: string; // e.g. "ORACLIME_DMS/Records/UPMBD260001/"
 
-  // E. Verification Metadata
+  // F. Verification Metadata
   reviewer?: string;
   verificationDate?: string;
-  correctedFields: string[];
+  correctedFields?: string[];
   verificationNotes?: string;
   auditTrail: AuditEntry[];
+
+  // G. Visual Media & Archival Lifecycle
+  photoUrl?: string; // Base64 data URL for technician profile photo
+  businessPhotoUrl?: string; // Base64 data URL for partner store/logo image
+  isArchived?: boolean; // Soft-delete / deactivated archive flag
+  archivedAt?: string;
+  archivedReason?: string;
 }
 
-export type UserRole = 'administrator' | 'operator';
+export type UserRole = 'super_admin' | 'administrator' | 'operator';
 export type UserStatus = 'active' | 'deactivated';
+
+export interface UserPermissions {
+  canManageUsers: boolean;
+  canEditRecords: boolean;
+  canDeleteRecords: boolean;
+  canVerifyDocuments: boolean;
+  canExportBackup: boolean;
+  canUnmaskAadhaar: boolean;
+}
 
 export interface UserAccount {
   id: string;
@@ -112,6 +169,8 @@ export interface UserAccount {
   fullName: string;
   role: UserRole;
   status: UserStatus;
+  permissions?: UserPermissions;
+  mustChangePassword?: boolean;
   passwordHash: string; // SHA-256 hash
   salt: string;
   createdAt: string;

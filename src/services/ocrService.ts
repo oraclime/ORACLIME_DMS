@@ -145,16 +145,18 @@ export class OcrService {
       district = 'Kanpur';
     }
 
-    // Category matching
-    let category: TechnicianCategory = 'HVAC & RAC Technician';
-    if (/chiller|centrifugal|screw/i.test(rawText)) {
-      category = 'Commercial Chiller Specialist';
-    } else if (/vrf|vrv|inverter/i.test(rawText)) {
-      category = 'Inverter AC & VRF Expert';
-    } else if (/cold\s*chain|deep\s*freezer|ammonia/i.test(rawText)) {
-      category = 'Cold Chain & Refrigeration';
-    } else if (/electrician|wireman|panel/i.test(rawText)) {
-      category = 'Electrical & Controls';
+    // Category matching - streamlined for AC Technician and partner roles
+    let category: TechnicianCategory = 'Normal AC Technician';
+    if (/service\s*center|workshop/i.test(rawText)) {
+      category = 'Authorized Service Center';
+    } else if (/godown|warehouse|depot|stockist/i.test(rawText)) {
+      category = 'Godown & Warehouse';
+    } else if (/wholesaler|distributor|dealer/i.test(rawText)) {
+      category = 'AC Parts & Equipment Wholesaler';
+    } else if (/senior|head\s*mechanic/i.test(rawText)) {
+      category = 'Senior AC Technician';
+    } else if (/installation|repair/i.test(rawText)) {
+      category = 'AC Installation & Repair';
     }
 
     // Confidence scoring

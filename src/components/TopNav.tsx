@@ -38,7 +38,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   onLogout,
   pendingReviewCount,
 }) => {
-  const isAdmin = currentUser.role === 'administrator';
+  const isAdmin = currentUser.role === 'super_admin' || currentUser.role === 'administrator';
 
   return (
     <header className="sticky top-0 z-40 flex items-center justify-between gap-6 px-6 py-2.5 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 text-slate-100">
@@ -55,15 +55,15 @@ export const TopNav: React.FC<TopNavProps> = ({
             <span className="text-base font-bold tracking-tight text-white group-hover:text-cyan-400 transition-colors whitespace-nowrap">
               ORACLIME
             </span>
-            <span className="block text-[10px] font-mono text-slate-400 tracking-wider">
-              DMS · WIN64 LOCAL
+            <span className="block text-[10px] font-mono text-cyan-400 tracking-wider">
+              TECH & PARTNER DMS · WIN64 LOCAL
             </span>
           </div>
         </button>
       </div>
 
       {/* Zone 2: Navigation Links */}
-      <nav className="hidden xl:flex items-center gap-1 text-xs font-medium">
+      <nav className="hidden lg:flex items-center gap-1 text-xs font-medium">
         <button
           onClick={() => setActiveTab('dashboard')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap shrink-0 ${

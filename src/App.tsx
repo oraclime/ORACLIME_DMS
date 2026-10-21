@@ -4,7 +4,13 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { TechnicianRecord, SystemSettings, AttachedDocument, UserAccount } from './types/dms';
+import { 
+  TechnicianRecord, 
+  SystemSettings, 
+  AttachedDocument, 
+  UserAccount,
+  MainCategory
+} from './types/dms';
 import { StorageService } from './services/storageService';
 import { TopNav } from './components/TopNav';
 import { SearchDashboard } from './components/SearchDashboard';
@@ -19,6 +25,8 @@ import { SecurityLockScreen, AadhaarUnlockModal, ChangePinModal } from './compon
 import { QuickSearchModal } from './components/QuickSearchModal';
 import { LoginScreen } from './components/LoginScreen';
 import { NewTechnicianModal } from './components/NewTechnicianModal';
+import { CustomDocumentUploadModal } from './components/CustomDocumentUploadModal';
+import { RegistrationFormModal } from './components/RegistrationFormModal';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => StorageService.getCurrentUser());
@@ -35,7 +43,18 @@ export default function App() {
   // Modals state
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
   const [isNewTechnicianModalOpen, setIsNewTechnicianModalOpen] = useState<boolean>(false);
+  const [newRecordCategory, setNewRecordCategory] = useState<MainCategory>('Technician');
   const [targetTechForAppend, setTargetTechForAppend] = useState<TechnicianRecord | null>(null);
+
+  // Custom Document Upload Modal state
+  const [isCustomUploadOpen, setIsCustomUploadOpen] = useState<boolean>(false);
+  const [customUploadTarget, setCustomUploadTarget] = useState<TechnicianRecord | null>(null);
+
+  // Registration Form Modal state
+  const [isRegistrationFormOpen, setIsRegistrationFormOpen] = useState<boolean>(false);
+  const [registrationFormType, setRegistrationFormType] = useState<'technician' | 'partner'>('technician');
+  const [registrationFormTargetRecordId, setRegistrationFormTargetRecordId] = useState<string | undefined>(undefined);
+
   const [isQuickSearchOpen, setIsQuickSearchOpen] = useState<boolean>(false);
   const [quickSearchQuery, setQuickSearchQuery] = useState<string>('');
 
@@ -84,7 +103,7 @@ export default function App() {
       const timeoutMs = (settings.autoLockMinutes || 15) * 60 * 1000;
       if (Date.now() - lastActivityRef.current > timeoutMs) {
         setIsSystemLocked(true);
-        setIsAadhaarUnlocked(false); // Relock unmasked Aadhaar
+        setIsAadhaarUnlocked(false);
       }
     }, 10000);
 
@@ -120,7 +139,7 @@ export default function App() {
     const saved = StorageService.updateTechnician(updated, note, actorName);
     refreshTechnicians();
     setSelectedTechnician(saved);
-    showToast(note || `Technician record ${saved.applicationNumber} updated.`);
+    showToast(note || `Record ${saved.applicationNumber} updated.`);
   };
 
   const handleImportComplete = (saved: TechnicianRecord) => {
@@ -131,7 +150,7 @@ export default function App() {
 
   const handleTechnicianCreated = (saved: TechnicianRecord) => {
     refreshTechnicians();
-    showToast(`Registered technician ${saved.applicationNumber} (${saved.fullName}).`);
+    showToast(`Registered ${saved.mainCategory || 'record'} ${saved.applicationNumber} (${saved.fullName}).`);
     setSelectedTechnician(saved);
   };
 
@@ -147,7 +166,7 @@ export default function App() {
   const handleRestoreCompleted = (count: number) => {
     refreshTechnicians();
     setSettings(StorageService.getSettings());
-    showToast(`Restored ${count} technician records from backup archive.`);
+    showToast(`Restored ${count} records from backup archive.`);
   };
 
   const handleLogout = () => {
@@ -156,6 +175,40 @@ export default function App() {
     setIsAadhaarUnlocked(false);
     setIsSystemLocked(false);
     setActiveTab('dashboard');
+  };
+
+  const handleAttachFormToRecord = (targetRecord: TechnicianRecord, doc: AttachedDocument) => {
+    const actorName = currentUser ? `${currentUser.fullName} (${currentUser.username})` : 'System';
+    const result = StorageService.attachDocumentToRecord(targetRecord.applicationNumber, doc, actorName);
+    if (result.success && result.updatedRecord) {
+      refreshTechnicians();
+      setSelectedTechnician(result.updatedRecord);
+      showToast(result.message);
+    } else {
+      showToast(result.message);
+    }
+  };
+
+  const handleCustomDocumentUploaded = (targetRecord: TechnicianRecord | null, doc: AttachedDocument) => {
+    refreshTechnicians();
+    if (targetRecord) {
+      const updated = StorageService.findByApplicationNumber(targetRecord.applicationNumber);
+      if (updated) {
+        setSelectedTechnician(updated);
+      }
+    }
+  };
+
+  const handleDeleteTechnician = (tech: TechnicianRecord, permanent: boolean = false, reason?: string) => {
+    const actorName = currentUser ? `${currentUser.fullName} (${currentUser.username})` : 'System';
+    const result = StorageService.deleteTechnician(tech.id, actorName, permanent, reason);
+    if (result.success) {
+      refreshTechnicians();
+      setSelectedTechnician(null);
+      showToast(result.message);
+    } else {
+      showToast(`Error: ${result.message}`);
+    }
   };
 
   // If not authenticated, render Login Screen
@@ -178,7 +231,7 @@ export default function App() {
         />
       )}
 
-      {/* Top Header conforming to Top Bar Contract */}
+      {/* Top Header */}
       <TopNav
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -214,9 +267,29 @@ export default function App() {
               setTargetTechForAppend(null);
               setIsImportModalOpen(true);
             }}
-            onOpenNewTechnician={() => setIsNewTechnicianModalOpen(true)}
+            onOpenNewTechnician={() => {
+              setNewRecordCategory('Technician');
+              setIsNewTechnicianModalOpen(true);
+            }}
+            onOpenNewPartner={() => {
+              setNewRecordCategory('Partner');
+              setIsNewTechnicianModalOpen(true);
+            }}
+            onOpenCustomUpload={() => {
+              setCustomUploadTarget(null);
+              setIsCustomUploadOpen(true);
+            }}
+            onOpenTechForm={() => {
+              setRegistrationFormType('technician');
+              setIsRegistrationFormOpen(true);
+            }}
+            onOpenPartnerForm={() => {
+              setRegistrationFormType('partner');
+              setIsRegistrationFormOpen(true);
+            }}
             onOpenReview={() => setActiveTab('review')}
             onOpenBackup={() => setActiveTab('database')}
+            onDeleteTechnician={handleDeleteTechnician}
             quickSearchQuery={quickSearchQuery}
             setQuickSearchQuery={setQuickSearchQuery}
             currentUser={currentUser}
@@ -232,9 +305,29 @@ export default function App() {
                 setTargetTechForAppend(null);
                 setIsImportModalOpen(true);
               }}
-              onOpenNewTechnician={() => setIsNewTechnicianModalOpen(true)}
+              onOpenNewTechnician={() => {
+                setNewRecordCategory('Technician');
+                setIsNewTechnicianModalOpen(true);
+              }}
+              onOpenNewPartner={() => {
+                setNewRecordCategory('Partner');
+                setIsNewTechnicianModalOpen(true);
+              }}
+              onOpenCustomUpload={() => {
+                setCustomUploadTarget(null);
+                setIsCustomUploadOpen(true);
+              }}
+              onOpenTechForm={() => {
+                setRegistrationFormType('technician');
+                setIsRegistrationFormOpen(true);
+              }}
+              onOpenPartnerForm={() => {
+                setRegistrationFormType('partner');
+                setIsRegistrationFormOpen(true);
+              }}
               onOpenReview={() => setActiveTab('review')}
               onOpenBackup={() => setActiveTab('database')}
+              onDeleteTechnician={handleDeleteTechnician}
               quickSearchQuery={quickSearchQuery}
               setQuickSearchQuery={setQuickSearchQuery}
               currentUser={currentUser}
@@ -302,21 +395,32 @@ export default function App() {
         )}
       </main>
 
-      {/* Technician Profile Modal */}
+      {/* Technician / Partner Profile Modal */}
       {selectedTechnician && (
         <TechnicianProfileModal
           technician={selectedTechnician}
           isOpen={!!selectedTechnician}
           onClose={() => setSelectedTechnician(null)}
           onUpdateTechnician={handleUpdateTechnician}
+          onDeleteTechnician={handleDeleteTechnician}
           isAadhaarUnlocked={isAadhaarUnlocked}
           onRequestUnlockAadhaar={() => setIsAadhaarUnlockModalOpen(true)}
           onOpenAddDocument={handleOpenAppendDocument}
+          onOpenCustomUpload={(tech) => {
+            setCustomUploadTarget(tech);
+            setIsCustomUploadOpen(true);
+          }}
+          onOpenRegistrationForm={(tech) => {
+            const isPartner = tech.mainCategory === 'Partner' || ['service_center', 'godown', 'wholesaler'].includes(tech.entityType || '');
+            setRegistrationFormType(isPartner ? 'partner' : 'technician');
+            setRegistrationFormTargetRecordId(tech.id);
+            setIsRegistrationFormOpen(true);
+          }}
           currentUser={currentUser}
         />
       )}
 
-      {/* PDF Import Workflow Modal */}
+      {/* General Document / PDF Import Workflow Modal */}
       <ImportWorkflowModal
         isOpen={isImportModalOpen}
         onClose={() => {
@@ -328,12 +432,39 @@ export default function App() {
         currentUser={currentUser}
       />
 
-      {/* Direct New Technician Registration Modal */}
+      {/* Custom Document Upload Modal with User-Defined Title */}
+      <CustomDocumentUploadModal
+        isOpen={isCustomUploadOpen}
+        onClose={() => setIsCustomUploadOpen(false)}
+        technicians={technicians}
+        onDocumentUploaded={handleCustomDocumentUploaded}
+        currentUser={currentUser}
+        showToast={showToast}
+        defaultTargetRecord={customUploadTarget}
+      />
+
+      {/* Registration Form Modal (Technician & Partner) */}
+      <RegistrationFormModal
+        isOpen={isRegistrationFormOpen}
+        onClose={() => {
+          setIsRegistrationFormOpen(false);
+          setRegistrationFormTargetRecordId(undefined);
+        }}
+        initialType={registrationFormType}
+        initialRecordId={registrationFormTargetRecordId}
+        technicians={technicians}
+        onAttachToRecord={handleAttachFormToRecord}
+        currentUser={currentUser}
+        showToast={showToast}
+      />
+
+      {/* Direct New Technician / Partner Registration Modal */}
       <NewTechnicianModal
         isOpen={isNewTechnicianModalOpen}
         onClose={() => setIsNewTechnicianModalOpen(false)}
         onTechnicianCreated={handleTechnicianCreated}
         currentUser={currentUser}
+        initialMainCategory={newRecordCategory}
       />
 
       {/* Quick Search Palette (Ctrl+K) */}

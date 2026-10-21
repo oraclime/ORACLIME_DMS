@@ -39,8 +39,11 @@ export const QuickSearchModal: React.FC<QuickSearchModalProps> = ({
     return (
       t.applicationNumber.toUpperCase().includes(q) ||
       t.fullName.toUpperCase().includes(q) ||
+      (t.contactPerson && t.contactPerson.toUpperCase().includes(q)) ||
       t.mobile.includes(q) ||
-      t.district.toUpperCase().includes(q)
+      t.district.toUpperCase().includes(q) ||
+      (t.bankDetails?.accountNumber && t.bankDetails.accountNumber.includes(q)) ||
+      (t.gstNumber && t.gstNumber.toUpperCase().includes(q))
     );
   });
 

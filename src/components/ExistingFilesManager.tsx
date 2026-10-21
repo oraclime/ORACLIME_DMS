@@ -246,11 +246,15 @@ export const ExistingFilesManager: React.FC<ExistingFilesManagerProps> = ({
                   className="bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 text-xs focus:outline-none focus:border-cyan-500 font-mono"
                 >
                   <option value="all">All Document Types</option>
-                  <option value="registration">Registration Forms</option>
+                  <option value="bank_account">Bank Passbook / Cheque</option>
                   <option value="aadhaar">Aadhaar Identity</option>
+                  <option value="pan_card">PAN Card</option>
+                  <option value="gst_certificate">GST / Trade License</option>
+                  <option value="agreement">Partner Agreement</option>
+                  <option value="registration">Registration Forms</option>
                   <option value="certificates">Trade Certificates</option>
                   <option value="experience">Experience Letters</option>
-                  <option value="photo">Photo Badges</option>
+                  <option value="photo">Photo / Badges</option>
                   <option value="other">Other Documents</option>
                 </select>
               </div>
@@ -309,8 +313,13 @@ export const ExistingFilesManager: React.FC<ExistingFilesManagerProps> = ({
                             <FileText className="w-4 h-4 text-cyan-400 shrink-0" />
                             <div>
                               <span className="font-mono font-bold text-white block">
-                                {doc.filename}
+                                {doc.customTitle || doc.filename}
                               </span>
+                              {doc.customTitle && (
+                                <span className="text-[10px] text-slate-400 block font-mono">
+                                  File: {doc.filename}
+                                </span>
+                              )}
                               <span className="text-[10px] font-mono text-slate-500 block truncate max-w-xs">
                                 {doc.virtualPath}
                               </span>
@@ -544,11 +553,15 @@ export const ExistingFilesManager: React.FC<ExistingFilesManagerProps> = ({
                 onChange={(e) => setUploadDocType(e.target.value as DocumentType)}
                 className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-cyan-500"
               >
+                <option value="bank_account">Bank Passbook / Cancelled Cheque</option>
+                <option value="aadhaar">Aadhaar Identity</option>
+                <option value="pan_card">PAN Card</option>
+                <option value="gst_certificate">GST / Trade License</option>
+                <option value="agreement">Partner Agreement / Contract</option>
                 <option value="registration">Registration Form</option>
                 <option value="certificates">Trade Certificate</option>
-                <option value="aadhaar">Aadhaar Identity</option>
                 <option value="experience">Experience Letter</option>
-                <option value="photo">Photo ID</option>
+                <option value="photo">Photo ID / Shop Photo</option>
                 <option value="other">Other Supporting Document</option>
               </select>
             </div>
